@@ -57,10 +57,12 @@ reference a specific request when contacting OpenAI support.
 
 ## How the size limit is handled
 
-1. If the file is under `max_size_mb`, it's sent as-is.
-2. Otherwise, it's re-encoded to MP3 at `bitrate`. If that's small enough, it's
-   sent.
-3. Otherwise, the file is split into `chunk_minutes`-long MP3 chunks, each
+1. The input is always first re-encoded to MP3 at `bitrate` via ffmpeg. This
+   isn't just for size — some phone recordings are saved as `.m4a` with a
+   container variant that OpenAI's format check rejects even though m4a is
+   nominally supported, and re-encoding sidesteps that.
+2. If the re-encoded file is under `max_size_mb`, it's sent as one request.
+3. Otherwise, it's split into `chunk_minutes`-long MP3 chunks, each
    transcribed separately. Each chunk's text is written to the output file
    immediately after it comes back, so if a later chunk fails, the earlier
    (already paid-for) results aren't lost.

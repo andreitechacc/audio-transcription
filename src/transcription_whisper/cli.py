@@ -66,39 +66,39 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
         size = get_size_mb(input_path)
         logger.info("Input size: %.1f MB", size)
 
-        if size <= config.max_size_mb:
-            text = transcribe_file(client, input_path, language, config.model)
+        # Always re-encode through ffmpeg first, even for small files: some
+        # phone recordings are saved as .m4a with a container brand (e.g.
+        # 3gp4) that OpenAI's format sniffing rejects, even though m4a is
+        # nominally supported. Re-encoding to a plain mp3 sidesteps that.
+        normalized_path = tmp_dir / "normalized.mp3"
+        compress_audio(input_path, normalized_path, config.bitrate)
+        normalized_size = get_size_mb(normalized_path)
+        logger.info("Normalized size: %.1f MB", normalized_size)
+
+        if normalized_size <= config.max_size_mb:
+            text = transcribe_file(client, normalized_path, language, config.model)
             output_path.write_text(text, encoding="utf-8")
         else:
-            compressed_path = tmp_dir / "compressed.mp3"
-            compress_audio(input_path, compressed_path, config.bitrate)
-            compressed_size = get_size_mb(compressed_path)
-            logger.info("Size after compression: %.1f MB", compressed_size)
-
-            if compressed_size <= config.max_size_mb:
-                text = transcribe_file(client, compressed_path, language, config.model)
-                output_path.write_text(text, encoding="utf-8")
-            else:
-                logger.info("Compression wasn't enough, splitting into chunks...")
-                chunks = split_audio(
-                    input_path, tmp_dir, config.chunk_minutes, config.bitrate
-                )
-                # Write each chunk's text as soon as it comes back, so a
-                # failure partway through doesn't lose the chunks that
-                # already succeeded (and were already paid for).
-                with open(output_path, "w", encoding="utf-8") as out:
-                    for i, chunk in enumerate(chunks):
-                        text = transcribe_file(client, chunk, language, config.model)
-                        if i > 0:
-                            out.write(" ")
-                        out.write(text)
-                        out.flush()
-                        logger.info(
-                            "Progress saved: chunk %d/%d written to %s",
-                            i + 1,
-                            len(chunks),
-                            output_path,
-                        )
+            logger.info("Still over the limit after re-encoding, splitting into chunks...")
+            chunks = split_audio(
+                normalized_path, tmp_dir, config.chunk_minutes, config.bitrate
+            )
+            # Write each chunk's text as soon as it comes back, so a
+            # failure partway through doesn't lose the chunks that
+            # already succeeded (and were already paid for).
+            with open(output_path, "w", encoding="utf-8") as out:
+                for i, chunk in enumerate(chunks):
+                    text = transcribe_file(client, chunk, language, config.model)
+                    if i > 0:
+                        out.write(" ")
+                    out.write(text)
+                    out.flush()
+                    logger.info(
+                        "Progress saved: chunk %d/%d written to %s",
+                        i + 1,
+                        len(chunks),
+                        output_path,
+                    )
     except Exception:
         logger.error(
             "Transcription failed; keeping temporary files for inspection/retry at %s",
