@@ -33,7 +33,7 @@ language = "en"        # default language code (e.g. "en", "pl")
 model = "whisper-1"
 max_size_mb = 24        # API limit is 25 MB, keep a small margin
 bitrate = "64k"         # bitrate used when compressing/splitting
-chunk_minutes = 10      # chunk length when splitting is needed
+chunk_minutes = 10      # split into chunks this long even if under max_size_mb
 ```
 
 The `--language` and `--config` CLI flags override these per run.
@@ -61,9 +61,13 @@ reference a specific request when contacting OpenAI support.
    isn't just for size — some phone recordings are saved as `.m4a` with a
    container variant that OpenAI's format check rejects even though m4a is
    nominally supported, and re-encoding sidesteps that.
-2. If the re-encoded file is under `max_size_mb`, it's sent as one request.
+2. If the re-encoded file is under `max_size_mb` **and** shorter than
+   `chunk_minutes`, it's sent as one request.
 3. Otherwise, it's split into `chunk_minutes`-long MP3 chunks, each
-   transcribed separately. Each chunk's text is written to the output file
+   transcribed separately — even if the file is under the size limit, since
+   a single long request is more likely to have its connection dropped
+   before the response comes back than several short ones. Each chunk's
+   text is written to the output file
    immediately after it comes back, so if a later chunk fails, the earlier
    (already paid-for) results aren't lost.
 

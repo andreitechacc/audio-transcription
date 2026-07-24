@@ -9,7 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .audio import compress_audio, get_size_mb, split_audio
+from .audio import compress_audio, get_duration_minutes, get_size_mb, split_audio
 from .config import Config
 from .transcriber import transcribe_file
 
@@ -73,13 +73,34 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
         normalized_path = tmp_dir / "normalized.mp3"
         compress_audio(input_path, normalized_path, config.bitrate)
         normalized_size = get_size_mb(normalized_path)
-        logger.info("Normalized size: %.1f MB", normalized_size)
+        duration_minutes = get_duration_minutes(normalized_path)
+        logger.info(
+            "Normalized size: %.1f MB, duration: %.1f min",
+            normalized_size,
+            duration_minutes,
+        )
 
-        if normalized_size <= config.max_size_mb:
+        # Split not just when over the API's size limit, but also when the
+        # audio is longer than chunk_minutes: a single request covering a
+        # long recording can take long enough that flaky connections
+        # (proxies, some VPNs, some ISPs) drop it before the response
+        # arrives, even though it's well under the 25 MB size limit. Shorter
+        # per-request audio means shorter, more reliable requests.
+        needs_split = (
+            normalized_size > config.max_size_mb
+            or duration_minutes > config.chunk_minutes
+        )
+
+        if not needs_split:
             text = transcribe_file(client, normalized_path, language, config.model)
             output_path.write_text(text, encoding="utf-8")
         else:
-            logger.info("Still over the limit after re-encoding, splitting into chunks...")
+            logger.info(
+                "Splitting into %d-minute chunks (size=%.1f MB, duration=%.1f min)",
+                config.chunk_minutes,
+                normalized_size,
+                duration_minutes,
+            )
             chunks = split_audio(
                 normalized_path, tmp_dir, config.chunk_minutes, config.bitrate
             )

@@ -12,6 +12,11 @@ def get_size_mb(path: Path) -> float:
     return path.stat().st_size / (1024 * 1024)
 
 
+def get_duration_minutes(path: Path) -> float:
+    audio = AudioSegment.from_file(path)
+    return len(audio) / (1000 * 60)
+
+
 def compress_audio(input_path: Path, output_path: Path, bitrate: str) -> Path:
     logger.info("Compressing %s -> %s (bitrate=%s)", input_path, output_path, bitrate)
     audio = AudioSegment.from_file(input_path)

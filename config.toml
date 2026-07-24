@@ -3,4 +3,7 @@ language = "en"
 model = "whisper-1"
 max_size_mb = 24
 bitrate = "64k"
+# Audio longer than this is always split into chunks of this length, even if
+# it's under max_size_mb — long single requests are more likely to have their
+# connection dropped before the response arrives.
 chunk_minutes = 10
