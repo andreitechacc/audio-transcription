@@ -48,7 +48,12 @@ uv run transcribe path/to/audio.m4a -o result.txt
 
 The transcript is written to `<input>.txt` by default (or the path passed to
 `-o`/`--output`). Intermediate compressed/split files are created in a
-temporary directory and cleaned up automatically.
+temporary directory; it's deleted automatically on success, but **kept on
+failure** so a failed run can be inspected or retried without recompressing.
+
+Every run also appends to `transcribe.log` (timestamps, sizes, per-request
+OpenAI request IDs, errors) — useful if a request fails or if you need to
+reference a specific request when contacting OpenAI support.
 
 ## How the size limit is handled
 
@@ -56,7 +61,24 @@ temporary directory and cleaned up automatically.
 2. Otherwise, it's re-encoded to MP3 at `bitrate`. If that's small enough, it's
    sent.
 3. Otherwise, the file is split into `chunk_minutes`-long MP3 chunks, each
-   transcribed separately, and the resulting texts are joined with spaces.
+   transcribed separately. Each chunk's text is written to the output file
+   immediately after it comes back, so if a later chunk fails, the earlier
+   (already paid-for) results aren't lost.
+
+## Network reliability
+
+Requests use a 120s timeout and up to 5 automatic retries, since a single
+transcription can legitimately take a minute or more and flaky connections
+(VPNs, proxies) can otherwise drop it prematurely. If you're outside an
+[OpenAI-supported region](https://platform.openai.com/docs/supported-countries)
+you'll need a VPN, but note that some VPN configurations disconnect long-lived
+connections themselves — if requests keep failing, try a different VPN
+server/protocol (WireGuard tends to hold up better than OpenVPN for this).
+
+Note: if a request fails *after* OpenAI already processed the audio (e.g. the
+response was lost in transit), you may still be billed for it — the API has
+no way to re-fetch a lost transcription result after the fact, only the
+request ID in `transcribe.log` for reference.
 
 ## License
 
