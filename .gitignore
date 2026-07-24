@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+
+# uv
+.uv/
+
+# Transcription output/artifacts (personal audio transcripts, not for the repo)
+*.txt
+!requirements.txt
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
