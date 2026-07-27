@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from transcription.core import config
 from transcription.core.config import TranscriptionParams, load_params
 from transcription.core.errors import ConfigError
 
@@ -71,3 +72,32 @@ def test_chunk_separator_depends_on_format():
         TranscriptionParams(model="whisper-1", response_format="json").chunk_separator
         == " "
     )
+
+
+def test_every_model_is_capped_by_default():
+    """Each model the API offers limits how much audio one request may carry.
+
+    A model absent from the override table must still be capped, otherwise the
+    first recording longer than its unknown limit is rejected outright.
+    """
+    for model in ("gpt-4o-transcribe", "whisper-1", "some-future-model"):
+        params = TranscriptionParams(
+            model=model, response_format="json", chunk_minutes=120
+        )
+        assert params.max_request_minutes == config.DEFAULT_MAX_DURATION_MINUTES
+
+
+def test_a_lower_chunk_minutes_still_wins():
+    # The cap is an upper bound, not an override of an explicit preference.
+    params = TranscriptionParams(
+        model="gpt-4o-transcribe", response_format="json", chunk_minutes=5
+    )
+    assert params.max_request_minutes == 5
+
+
+def test_a_confirmed_model_limit_overrides_the_default(monkeypatch):
+    monkeypatch.setitem(config.MODEL_MAX_DURATION_MINUTES, "slow-model", 8.0)
+    params = TranscriptionParams(
+        model="slow-model", response_format="json", chunk_minutes=45
+    )
+    assert params.max_request_minutes == 8.0

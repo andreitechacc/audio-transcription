@@ -125,10 +125,13 @@ place where `A` may become `B`, so the aim is to send as much audio per
 request as the limits allow.
 
 How much audio one request may carry is the stricter of two limits: the
-`chunk_minutes` you configure, and the model's own hard cap —
-`gpt-4o-transcribe-diarize` rejects anything over 1400 seconds (23 minutes)
-outright. The model's limit is kept in code rather than in `config.toml`,
-since raising it would only guarantee an HTTP 400.
+`chunk_minutes` you configure, and the model's own hard cap. Every model has
+one — `gpt-4o-transcribe-diarize` rejects anything over 1400 seconds outright
+— so a conservative 23-minute cap is applied to all of them, with per-model
+overrides for limits confirmed to differ. These live in code rather than in
+`config.toml`, since raising one would only guarantee an HTTP 400. Being
+conservative for a model that would have accepted more costs one extra
+request; guessing high costs a rejected one.
 
 1. **Within that limit:** converted to a single mono MP3 and sent as one
    request. The conversion is not only about size — some phone recordings are

@@ -16,10 +16,10 @@ max_size_mb = 24
 # max_size_mb is reached at roughly 50 minutes of audio.
 bitrate = "64k"
 
-# An upper bound on one request, not a target. Models may impose their own
-# hard per-request limit, and the stricter of the two always wins:
-# gpt-4o-transcribe-diarize rejects anything over 1400 seconds, so with that
-# model a request never exceeds 23 minutes however high this is set.
+# An upper bound on one request, not a target. Every model also imposes its
+# own hard per-request duration limit, and the stricter of the two always
+# wins — so raising this past roughly 23 minutes has no effect. Lower it if
+# you want shorter requests than the model would allow.
 chunk_minutes = 45
 
 # One request covering 45 minutes takes several minutes to come back, and the

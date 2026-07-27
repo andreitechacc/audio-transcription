@@ -19,12 +19,15 @@ KNOWN_FORMATS = RAW_TEXT_FORMATS | {"json", "verbose_json", "diarized_json"}
 # properties of the model, not preferences, so they live in code rather than
 # in config.toml where they could be raised into a guaranteed HTTP 400.
 #
-# gpt-4o-transcribe-diarize rejects anything over 1400 seconds (23.3 min);
-# the value below keeps a margin. Models absent from this mapping have no
-# known duration limit, and are bounded by max_size_mb alone.
-MODEL_MAX_DURATION_MINUTES: dict[str, float] = {
-    "gpt-4o-transcribe-diarize": 23.0,
-}
+# Every model caps this, so the cap applies by default rather than only to
+# models listed below. The default is the smallest limit observed in an actual
+# API rejection (gpt-4o-transcribe-diarize: "longer than 1400 seconds"), with
+# a margin. Being conservative for a model that would have allowed more costs
+# only an extra request, whereas guessing high costs a rejected one.
+DEFAULT_MAX_DURATION_MINUTES = 23.0
+
+# Per-model overrides, for limits confirmed to differ from the default.
+MODEL_MAX_DURATION_MINUTES: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -80,13 +83,13 @@ class TranscriptionParams:
     def max_request_minutes(self) -> float:
         """The most audio one request may carry.
 
-        The stricter of what the user asked for and what the model actually
-        accepts, so raising chunk_minutes past a model's hard limit degrades
-        into that limit instead of into a guaranteed rejection.
+        The stricter of what the user asked for and what the model accepts, so
+        raising chunk_minutes past a model's hard limit degrades into that
+        limit instead of into a guaranteed rejection.
         """
-        model_limit = MODEL_MAX_DURATION_MINUTES.get(self.model)
-        if model_limit is None:
-            return float(self.chunk_minutes)
+        model_limit = MODEL_MAX_DURATION_MINUTES.get(
+            self.model, DEFAULT_MAX_DURATION_MINUTES
+        )
         return min(float(self.chunk_minutes), model_limit)
 
     @property
