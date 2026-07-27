@@ -2,10 +2,12 @@
 # flag (see `uv run transcribe --help`).
 language = "en"
 
-model = "gpt-4o-transcribe-diarize"
-# "json" for a plain transcript, "diarized_json" for speaker-labeled output.
-# diarized_json requires a diarizing model; the pairing is checked at startup.
-response_format = "diarized_json"
+# Plain transcript. Speaker-labelled output is supported too — set
+# model = "gpt-4o-transcribe-diarize" and response_format = "diarized_json" —
+# but on a real multi-speaker recording it reported seven or more speakers
+# where there were three, so it is not the default. See the README.
+model = "gpt-4o-transcribe"
+response_format = "json"
 
 # The API limit is 25 MB; the margin covers container overhead. This is what
 # actually decides whether a recording gets split.
@@ -14,15 +16,10 @@ max_size_mb = 24
 # max_size_mb is reached at roughly 50 minutes of audio.
 bitrate = "64k"
 
-# An upper bound, not a target. Splitting costs transcription quality: the API
-# keeps speaker labels consistent within a single request but assigns them
-# from scratch in the next one, so every split is a seam where "A" can become
-# "B".
-#
-# Models also impose their own hard per-request limit, and the stricter of the
-# two always wins — gpt-4o-transcribe-diarize rejects anything over 1400
-# seconds, so with that model a request never exceeds 23 minutes however high
-# this is set. Lower it if you want shorter requests than the model allows.
+# An upper bound on one request, not a target. Models may impose their own
+# hard per-request limit, and the stricter of the two always wins:
+# gpt-4o-transcribe-diarize rejects anything over 1400 seconds, so with that
+# model a request never exceeds 23 minutes however high this is set.
 chunk_minutes = 45
 
 # One request covering 45 minutes takes several minutes to come back, and the

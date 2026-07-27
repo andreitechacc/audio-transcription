@@ -63,17 +63,35 @@ them per run.
 
 ```toml
 language = "en"
-model = "gpt-4o-transcribe-diarize"
-response_format = "diarized_json"  # speaker-labelled; "json" for plain text
-max_size_mb = 24                   # API limit is 25 MB, keep a margin
-bitrate = "64k"                    # mono; 24 MB is reached at roughly 50 min
-chunk_minutes = 45                 # upper bound on one request, not a target
+model = "gpt-4o-transcribe"
+response_format = "json"    # plain transcript
+max_size_mb = 24            # API limit is 25 MB, keep a margin
+bitrate = "64k"             # mono; 24 MB is reached at roughly 50 min
+chunk_minutes = 45          # upper bound on one request, not a target
 request_timeout_seconds = 900
 ```
 
-`diarized_json` labels each line with a speaker (`[A] …`, `[B] …`) and
-requires a diarizing model. That pairing is validated at startup, because the
-API's own error for the wrong combination is hard to interpret.
+### Speaker labels
+
+Speaker-labelled output is supported but not enabled by default:
+
+```bash
+uv run transcribe recording.m4a \
+  --model gpt-4o-transcribe-diarize --response-format diarized_json
+```
+
+Each line then comes back labelled (`[A] …`, `[B] …`). The pairing of format
+and model is validated at startup, because the API's own error for the wrong
+combination is hard to interpret.
+
+It is off by default because of how it performed here rather than on
+principle. On a 29-minute recording of three people it reported seven to nine
+distinct speakers per chunk, and setting the correct `--language` did not
+meaningfully change that. Splitting makes it worse still: the API keeps labels
+consistent within one request but assigns them from scratch in the next, so
+`A` in one chunk and `C` in the next may well be the same person. Useful for
+getting a rough sense of turn-taking; not something to rely on for who said
+what.
 
 ## Architecture
 
@@ -101,10 +119,10 @@ inside Python, so memory use stays flat regardless of recording length.
 
 ## How long and oversized audio is handled
 
-**Splitting is avoided wherever possible, because it costs quality.** The API
-keeps speaker labels consistent within a single request, but assigns them from
-scratch in the next one, so every split is a seam where `A` may become `B`.
-The aim is therefore to send as much audio per request as the limits allow.
+Splitting is avoided wherever possible. For a plain transcript the cost is
+small — the pieces are simply joined — but with speaker labels every seam is a
+place where `A` may become `B`, so the aim is to send as much audio per
+request as the limits allow.
 
 How much audio one request may carry is the stricter of two limits: the
 `chunk_minutes` you configure, and the model's own hard cap —
