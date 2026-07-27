@@ -8,16 +8,20 @@ __pycache__/
 build/
 dist/
 .venv/
+.pytest_cache/
 
 # uv
 .uv/
 
-# Transcription output/artifacts (personal audio transcripts, not for the repo)
-*.txt
-!requirements.txt
-*.log
+# Working directory for local runs: audio to transcribe and the transcripts
+# it produces. The tool itself never requires this folder — it is a
+# convention so personal recordings stay out of the repository root.
+data/
 
-# Personal audio inputs (never belong in a public repo)
+# Belt and braces: even outside data/, personal recordings and transcripts
+# must never end up in a public repo.
+*.txt
+*.log
 *.m4a
 *.mp3
 *.wav

@@ -1,12 +1,17 @@
-# Default settings. Override the language per run with --language.
+# Defaults for every run. Each of these can be overridden per run by a CLI
+# flag (see `uv run transcribe --help`).
 language = "en"
+
 model = "gpt-4o-transcribe-diarize"
-# "json" for plain transcript text, "diarized_json" for speaker-labeled
-# output (only supported by the gpt-4o-transcribe-diarize model).
+# "json" for a plain transcript, "diarized_json" for speaker-labeled output.
+# diarized_json requires a diarizing model; the pairing is checked at startup.
 response_format = "diarized_json"
+
+# The API limit is 25 MB; the margin covers container overhead.
 max_size_mb = 24
+# Audio is encoded to mono MP3 at this bitrate before being uploaded.
 bitrate = "64k"
-# Audio longer than this is always split into chunks of this length, even if
-# it's under max_size_mb — long single requests are more likely to have their
+# Audio longer than this is always split into chunks of this length, even when
+# it is under max_size_mb — long single requests are more likely to have their
 # connection dropped before the response arrives.
 chunk_minutes = 10
