@@ -1,6 +1,9 @@
 # Default settings. Override the language per run with --language.
 language = "en"
-model = "whisper-1"
+model = "gpt-4o-transcribe-diarize"
+# "json" for plain transcript text, "diarized_json" for speaker-labeled
+# output (only supported by the gpt-4o-transcribe-diarize model).
+response_format = "diarized_json"
 max_size_mb = 24
 bitrate = "64k"
 # Audio longer than this is always split into chunks of this length, even if

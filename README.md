@@ -29,12 +29,18 @@ cp .env.example .env
 Non-secret defaults live in [`config.toml`](config.toml):
 
 ```toml
-language = "en"        # default language code (e.g. "en", "pl")
-model = "whisper-1"
-max_size_mb = 24        # API limit is 25 MB, keep a small margin
-bitrate = "64k"         # bitrate used when compressing/splitting
-chunk_minutes = 10      # split into chunks this long even if under max_size_mb
+language = "en"                   # default language code (e.g. "en", "pl")
+model = "gpt-4o-transcribe-diarize"
+response_format = "diarized_json" # "json" for plain text, "diarized_json" for speaker-labeled output
+max_size_mb = 24                  # API limit is 25 MB, keep a small margin
+bitrate = "64k"                   # bitrate used when compressing/splitting
+chunk_minutes = 10                # split into chunks this long even if under max_size_mb
 ```
+
+`response_format = "diarized_json"` requires `model = "gpt-4o-transcribe-diarize"` and
+labels each line with a speaker (`[A] ...`, `[B] ...`). To get plain, unlabeled
+text instead, set `model = "whisper-1"` (or `gpt-4o-transcribe`) and
+`response_format = "json"`.
 
 The `--language` and `--config` CLI flags override these per run.
 
@@ -72,6 +78,11 @@ reference a specific request when contacting OpenAI support.
    text is written to the output file
    immediately after it comes back, so if a later chunk fails, the earlier
    (already paid-for) results aren't lost.
+
+When using `response_format = "diarized_json"` on audio long enough to be
+split, each chunk is diarized independently — speaker labels (`A`, `B`, ...)
+are **not** guaranteed to refer to the same person across chunk boundaries,
+since each request re-assigns labels from scratch.
 
 ## Network reliability
 

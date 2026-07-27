@@ -93,7 +93,9 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
             needs_split = True
 
         if not needs_split:
-            text = transcribe_file(client, normalized_path, language, config.model)
+            text = transcribe_file(
+                client, normalized_path, language, config.model, config.response_format
+            )
             output_path.write_text(text, encoding="utf-8")
         else:
             logger.info(
@@ -102,17 +104,29 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
                 size,
                 duration_minutes,
             )
+            if config.response_format == "diarized_json":
+                # Each chunk is diarized independently, so speaker labels
+                # ("A", "B", ...) are not guaranteed to refer to the same
+                # person across chunk boundaries.
+                logger.warning(
+                    "Diarizing in %d separate chunks; speaker labels may not "
+                    "stay consistent across chunk boundaries",
+                    config.chunk_minutes,
+                )
             chunks = split_audio(
                 input_path, tmp_dir, config.chunk_minutes, config.bitrate
             )
             # Write each chunk's text as soon as it comes back, so a
             # failure partway through doesn't lose the chunks that
             # already succeeded (and were already paid for).
+            separator = "\n\n" if config.response_format == "diarized_json" else " "
             with open(output_path, "w", encoding="utf-8") as out:
                 for i, chunk in enumerate(chunks):
-                    text = transcribe_file(client, chunk, language, config.model)
+                    text = transcribe_file(
+                        client, chunk, language, config.model, config.response_format
+                    )
                     if i > 0:
-                        out.write(" ")
+                        out.write(separator)
                     out.write(text)
                     out.flush()
                     logger.info(

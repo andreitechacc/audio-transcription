@@ -14,6 +14,7 @@ DEFAULT_CONFIG_PATH = Path("config.toml")
 class Config:
     language: str
     model: str
+    response_format: str
     max_size_mb: float
     bitrate: str
     chunk_minutes: int
@@ -31,6 +32,7 @@ class Config:
         return cls(
             language=data.get("language", "en"),
             model=data.get("model", "whisper-1"),
+            response_format=data.get("response_format", "json"),
             max_size_mb=float(data.get("max_size_mb", 24)),
             bitrate=data.get("bitrate", "64k"),
             chunk_minutes=int(data.get("chunk_minutes", 10)),

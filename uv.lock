@@ -432,7 +432,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "audioop-lts", marker = "python_full_version >= '3.13'", specifier = ">=0.2.1" },
-    { name = "openai", specifier = ">=1.40" },
+    { name = "openai", specifier = ">=2.48" },
     { name = "pydub", specifier = ">=0.25.1" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
 ]
