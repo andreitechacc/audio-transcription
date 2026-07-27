@@ -1,6 +1,6 @@
 # transcription
 
-[![CI](https://github.com/USERNAME/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/USERNAME/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/andreitechacc/audio-transcription/actions/workflows/ci.yml/badge.svg)](https://github.com/andreitechacc/audio-transcription/actions/workflows/ci.yml)
 
 Transcribes audio files with the [OpenAI speech-to-text API](https://platform.openai.com/docs/guides/speech-to-text),
 including speaker-labelled output. Long or oversized recordings are converted
@@ -20,8 +20,8 @@ same core (see [Roadmap](#roadmap)).
 ## Setup
 
 ```bash
-git clone <your-repo-url>
-cd transcription
+git clone https://github.com/andreitechacc/audio-transcription.git
+cd audio-transcription
 uv sync
 cp .env.example .env      # then set OPENAI_API_KEY in .env
 ```
