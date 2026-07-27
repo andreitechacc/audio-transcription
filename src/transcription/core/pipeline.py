@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -137,7 +138,7 @@ def _prepare_audio(
     (proxies, some VPNs) drop the connection before the response arrives.
     Several short requests are individually far more likely to complete.
     """
-    if duration_minutes <= params.chunk_minutes:
+    if duration_minutes <= params.max_request_minutes:
         _notify(on_progress, Progress("preparing", 0, 0, "Converting audio..."))
         # Re-encoding a short file is not only about size: some phone
         # recordings are .m4a with a container brand (e.g. 3gp4) that the
@@ -152,11 +153,13 @@ def _prepare_audio(
             return [normalized], False
         logger.info("Still over %.1f MB after conversion; splitting", params.max_size_mb)
 
+    chunk_seconds = _plan_chunk_length(duration_minutes, params.max_request_minutes)
     logger.info(
-        "Splitting into %d-minute chunks (size=%.1f MB, duration=%.1f min)",
-        params.chunk_minutes,
-        size_mb,
+        "Splitting %.1f min into %d chunks of %.1f min (size=%.1f MB)",
         duration_minutes,
+        round(duration_minutes * 60 / chunk_seconds),
+        chunk_seconds / 60,
+        size_mb,
     )
     if params.is_diarized:
         # Each chunk is diarized independently, so speaker labels ("A", "B")
@@ -169,8 +172,20 @@ def _prepare_audio(
     # Chunks are cut from the original file, not from a re-encoded copy: the
     # split re-encodes each chunk anyway, so converting first would double the
     # work and stack one lossy encode on another.
-    chunks = split_to_mp3_chunks(input_path, work_dir, params.chunk_minutes, params.bitrate)
+    chunks = split_to_mp3_chunks(input_path, work_dir, chunk_seconds, params.bitrate)
     return chunks, True
+
+
+def _plan_chunk_length(duration_minutes: float, max_minutes: float) -> float:
+    """Choose a chunk length in seconds: as few chunks as allowed, all equal.
+
+    Fewer chunks means fewer seams where speaker labels can be reassigned, and
+    equal chunks avoid leaving a short trailing fragment — the piece a
+    diarizer has least context for. Splitting 29 minutes under a 23-minute
+    limit therefore gives two chunks of 14.5, not 23 followed by 6.
+    """
+    chunk_count = math.ceil(duration_minutes / max_minutes)
+    return duration_minutes * 60 / chunk_count
 
 
 def _transcribe_all(

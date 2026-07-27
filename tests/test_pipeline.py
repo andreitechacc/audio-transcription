@@ -10,6 +10,9 @@ from transcription.core.errors import ApiError, TranscriptionError
 
 DIARIZED = TranscriptionParams(chunk_minutes=10, max_size_mb=24)
 PLAIN = TranscriptionParams(model="whisper-1", response_format="json", chunk_minutes=10)
+# The shipped defaults: chunk_minutes=45, capped to 23 by the model's own
+# per-request duration limit.
+DEFAULTS = TranscriptionParams()
 
 
 class AudioStub:
@@ -27,6 +30,7 @@ class AudioStub:
         self.chunks = chunks
         self.transcode_calls = 0
         self.split_calls = 0
+        self.chunk_seconds: float | None = None
         self.transcribed: list[str] = []
         self.fail_on_call: int | None = None
 
@@ -48,8 +52,9 @@ class AudioStub:
         self.transcode_calls += 1
         return output_path
 
-    def _split(self, input_path, out_dir, chunk_minutes, bitrate):
+    def _split(self, input_path, out_dir, chunk_seconds, bitrate):
         self.split_calls += 1
+        self.chunk_seconds = chunk_seconds
         return [out_dir / f"chunk_{i:03d}.mp3" for i in range(self.chunks)]
 
     def _transcribe(self, client, path, params):
@@ -154,3 +159,47 @@ def test_a_broken_progress_callback_does_not_lose_the_transcript(source, monkeyp
     result = pipeline.transcribe(source, PLAIN, client=None, on_progress=explode)
 
     assert len(result.chunks) == 2
+
+
+# --- request size limits ----------------------------------------------------
+
+
+def test_the_model_duration_limit_overrides_a_larger_chunk_minutes(source, monkeypatch):
+    """gpt-4o-transcribe-diarize rejects anything over 1400 seconds.
+
+    That limit belongs to the model, so asking for longer requests must be
+    silently reduced to what the API accepts rather than produce an HTTP 400.
+    """
+    stub = AudioStub(duration_minutes=20, transcoded_size_mb=9).install(monkeypatch)
+
+    # chunk_minutes=45, but the model caps a request at 23 minutes.
+    result = pipeline.transcribe(source, DEFAULTS, client=None)
+
+    assert result.was_split is False  # 20 minutes still fits in one request
+    assert stub.split_calls == 0
+
+    stub = AudioStub(duration_minutes=30, transcoded_size_mb=14).install(monkeypatch)
+    result = pipeline.transcribe(source, DEFAULTS, client=None)
+
+    # 30 minutes does not, even though it is well under chunk_minutes and
+    # under max_size_mb.
+    assert result.was_split is True
+
+
+def test_a_recording_is_divided_into_equal_chunks(source, monkeypatch):
+    # 29 minutes under a 23-minute limit needs two requests. Cutting at the
+    # limit would leave a 6-minute tail, which is the least useful piece to
+    # give a diarizer; two halves are better.
+    stub = AudioStub(duration_minutes=29, chunks=2).install(monkeypatch)
+
+    pipeline.transcribe(source, DEFAULTS, client=None)
+
+    assert stub.chunk_seconds == pytest.approx(29 * 60 / 2)
+
+
+def test_chunks_never_exceed_the_model_limit(source, monkeypatch):
+    for duration in (24, 47, 70, 200):
+        stub = AudioStub(duration_minutes=duration).install(monkeypatch)
+        pipeline.transcribe(source, DEFAULTS, client=None)
+        assert stub.chunk_seconds is not None
+        assert stub.chunk_seconds <= DEFAULTS.max_request_minutes * 60

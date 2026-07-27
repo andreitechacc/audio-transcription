@@ -123,9 +123,14 @@ def transcode_to_mp3(input_path: Path, output_path: Path, bitrate: str) -> Path:
 
 
 def split_to_mp3_chunks(
-    input_path: Path, out_dir: Path, chunk_minutes: int, bitrate: str
+    input_path: Path, out_dir: Path, chunk_seconds: float, bitrate: str
 ) -> list[Path]:
-    """Cut the input into mp3 chunks of at most `chunk_minutes` each.
+    """Cut the input into mp3 chunks of at most `chunk_seconds` each.
+
+    Takes seconds rather than whole minutes so a recording can be divided into
+    equal parts: splitting 29 minutes at a 23-minute limit gives 14.5 + 14.5
+    rather than 23 + 6, and a short trailing fragment is the worst piece to
+    hand a diarizer.
 
     ffmpeg's segment muxer does the whole split in one pass: it decodes the
     input once and writes every chunk as it goes, rather than us seeking back
@@ -143,7 +148,7 @@ def split_to_mp3_chunks(
             "-f",
             "segment",
             "-segment_time",
-            str(chunk_minutes * 60),
+            f"{chunk_seconds:.3f}",
             # Without this, each chunk keeps the original file's timeline, so
             # chunk 3 would claim to start at 20:00 and duration probes (and
             # some players) get confused.

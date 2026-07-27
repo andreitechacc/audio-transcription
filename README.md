@@ -106,19 +106,24 @@ keeps speaker labels consistent within a single request, but assigns them from
 scratch in the next one, so every split is a seam where `A` may become `B`.
 The aim is therefore to send as much audio per request as the limits allow.
 
-1. **Shorter than `chunk_minutes`:** converted to a single mono MP3 and sent
-   as one request. The conversion is not only about size — some phone
-   recordings are `.m4a` with a container brand (e.g. `3gp4`) that the API
-   rejects even though m4a is nominally supported, and a plain MP3 sidesteps
-   that. Mono at 64k also means a 30-minute recording is around 14 MB, well
-   inside the limit. If the result still exceeds `max_size_mb`, it falls
-   through to splitting.
-2. **Longer than `chunk_minutes`, or still too large after conversion:** split
-   from the original file into chunks, each transcribed separately.
+How much audio one request may carry is the stricter of two limits: the
+`chunk_minutes` you configure, and the model's own hard cap —
+`gpt-4o-transcribe-diarize` rejects anything over 1400 seconds (23 minutes)
+outright. The model's limit is kept in code rather than in `config.toml`,
+since raising it would only guarantee an HTTP 400.
 
-With the default settings, size is what actually triggers a split: at 64k mono
-`max_size_mb` is reached at roughly 50 minutes, and `chunk_minutes` sits below
-that as a safety bound rather than as the usual reason to split.
+1. **Within that limit:** converted to a single mono MP3 and sent as one
+   request. The conversion is not only about size — some phone recordings are
+   `.m4a` with a container brand (e.g. `3gp4`) that the API rejects even
+   though m4a is nominally supported, and a plain MP3 sidesteps that. If the
+   result still exceeds `max_size_mb`, it falls through to splitting.
+2. **Beyond it:** split from the original file, each chunk transcribed
+   separately.
+
+When splitting, the recording is divided into **equal** parts rather than cut
+at the limit. A 29-minute recording under a 23-minute cap becomes 14.5 + 14.5,
+not 23 + 6: a short trailing fragment is the piece a diarizer has least
+context for, so leaving one costs quality for no benefit.
 
 ## Network reliability
 

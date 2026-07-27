@@ -17,7 +17,12 @@ bitrate = "64k"
 # An upper bound, not a target. Splitting costs transcription quality: the API
 # keeps speaker labels consistent within a single request but assigns them
 # from scratch in the next one, so every split is a seam where "A" can become
-# "B". Keep this high enough that size, not duration, decides the split.
+# "B".
+#
+# Models also impose their own hard per-request limit, and the stricter of the
+# two always wins — gpt-4o-transcribe-diarize rejects anything over 1400
+# seconds, so with that model a request never exceeds 23 minutes however high
+# this is set. Lower it if you want shorter requests than the model allows.
 chunk_minutes = 45
 
 # One request covering 45 minutes takes several minutes to come back, and the

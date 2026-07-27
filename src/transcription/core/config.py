@@ -15,6 +15,17 @@ DEFAULT_CONFIG_PATH = Path("config.toml")
 RAW_TEXT_FORMATS = frozenset({"text", "srt", "vtt"})
 KNOWN_FORMATS = RAW_TEXT_FORMATS | {"json", "verbose_json", "diarized_json"}
 
+# Hard per-request duration limits imposed by the API, in minutes. These are
+# properties of the model, not preferences, so they live in code rather than
+# in config.toml where they could be raised into a guaranteed HTTP 400.
+#
+# gpt-4o-transcribe-diarize rejects anything over 1400 seconds (23.3 min);
+# the value below keeps a margin. Models absent from this mapping have no
+# known duration limit, and are bounded by max_size_mb alone.
+MODEL_MAX_DURATION_MINUTES: dict[str, float] = {
+    "gpt-4o-transcribe-diarize": 23.0,
+}
+
 
 @dataclass(frozen=True)
 class TranscriptionParams:
@@ -64,6 +75,19 @@ class TranscriptionParams:
             raise ConfigError("max_size_mb must be greater than 0.")
         if self.request_timeout_seconds <= 0:
             raise ConfigError("request_timeout_seconds must be greater than 0.")
+
+    @property
+    def max_request_minutes(self) -> float:
+        """The most audio one request may carry.
+
+        The stricter of what the user asked for and what the model actually
+        accepts, so raising chunk_minutes past a model's hard limit degrades
+        into that limit instead of into a guaranteed rejection.
+        """
+        model_limit = MODEL_MAX_DURATION_MINUTES.get(self.model)
+        if model_limit is None:
+            return float(self.chunk_minutes)
+        return min(float(self.chunk_minutes), model_limit)
 
     @property
     def chunk_separator(self) -> str:
