@@ -23,6 +23,10 @@ from .transcriber import transcribe_audio
 
 logger = logging.getLogger(__name__)
 
+# Added to each chunk so the final split boundary falls past the end of the
+# audio rather than just short of it. See _plan_chunk_length.
+SPLIT_MARGIN_SECONDS = 5.0
+
 
 @dataclass(frozen=True)
 class Progress:
@@ -183,9 +187,17 @@ def _plan_chunk_length(duration_minutes: float, max_minutes: float) -> float:
     equal chunks avoid leaving a short trailing fragment — the piece a
     diarizer has least context for. Splitting 29 minutes under a 23-minute
     limit therefore gives two chunks of 14.5, not 23 followed by 6.
+
+    The margin matters more than it looks: ffmpeg ends a segment slightly
+    after the requested time, so asking for exactly duration/n puts the final
+    boundary a hair before the end of the audio and leaves an empty trailing
+    file. Asking for slightly more puts the boundary past the end. The chunk
+    count is derived from the reduced limit, so the margin can never push a
+    chunk over what the model accepts.
     """
-    chunk_count = math.ceil(duration_minutes / max_minutes)
-    return duration_minutes * 60 / chunk_count
+    usable_seconds = max_minutes * 60 - SPLIT_MARGIN_SECONDS
+    chunk_count = math.ceil(duration_minutes * 60 / usable_seconds)
+    return duration_minutes * 60 / chunk_count + SPLIT_MARGIN_SECONDS
 
 
 def _transcribe_all(

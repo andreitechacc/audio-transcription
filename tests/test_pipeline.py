@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -194,7 +195,24 @@ def test_a_recording_is_divided_into_equal_chunks(source, monkeypatch):
 
     pipeline.transcribe(source, DEFAULTS, client=None)
 
-    assert stub.chunk_seconds == pytest.approx(29 * 60 / 2)
+    assert stub.chunk_seconds == pytest.approx(
+        29 * 60 / 2 + pipeline.SPLIT_MARGIN_SECONDS
+    )
+
+
+def test_chunks_reach_past_the_end_of_the_recording(source, monkeypatch):
+    """Otherwise ffmpeg opens one more file and writes nothing into it.
+
+    A sub-second trailing chunk is rejected by the API as a corrupt file, so a
+    boundary landing just short of the end fails a job whose real chunks all
+    succeeded.
+    """
+    for duration in (29, 46.5, 47, 70.02, 200):
+        stub = AudioStub(duration_minutes=duration).install(monkeypatch)
+        pipeline.transcribe(source, DEFAULTS, client=None)
+
+        chunk_count = math.ceil(duration * 60 / stub.chunk_seconds)
+        assert stub.chunk_seconds * chunk_count > duration * 60
 
 
 def test_chunks_never_exceed_the_model_limit(source, monkeypatch):

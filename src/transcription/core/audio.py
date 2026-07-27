@@ -9,6 +9,10 @@ from .errors import AudioError, FfmpegNotFoundError
 
 logger = logging.getLogger(__name__)
 
+# Anything shorter than this carries no speech worth a request, and is almost
+# always an artefact of where the split landed rather than real audio.
+MIN_CHUNK_SECONDS = 1.0
+
 # Nothing here decodes audio in Python. Every operation is a single ffmpeg
 # invocation that streams the file, so memory use stays flat no matter how
 # long the recording is, and the audio is decoded once per operation instead
@@ -159,8 +163,31 @@ def split_to_mp3_chunks(
         f"Splitting {input_path.name}",
     )
 
-    chunks = sorted(out_dir.glob("chunk_*.mp3"))
+    chunks = _drop_unusable_chunks(sorted(out_dir.glob("chunk_*.mp3")))
     if not chunks:
-        raise AudioError(f"Splitting {input_path.name} produced no chunks.")
+        raise AudioError(f"Splitting {input_path.name} produced no usable chunks.")
     logger.info("Split %s into %d chunk(s)", input_path.name, len(chunks))
     return chunks
+
+
+def _drop_unusable_chunks(paths: list[Path]) -> list[Path]:
+    """Discard trailing fragments the segment muxer leaves behind.
+
+    ffmpeg decides where a segment ends slightly after the requested time, so
+    when the boundary lands near the end of the recording it still opens one
+    more output file and writes little or nothing to it. The result is a
+    sub-second — often not even decodable — mp3 that the API rejects as a
+    corrupt file, failing a job whose real chunks all succeeded.
+    """
+    usable = []
+    for path in paths:
+        try:
+            seconds = probe_duration_minutes(path) * 60
+        except AudioError:
+            seconds = 0.0  # not decodable at all
+        if seconds < MIN_CHUNK_SECONDS:
+            logger.info("Discarding empty trailing chunk %s (%.2fs)", path.name, seconds)
+            path.unlink(missing_ok=True)
+            continue
+        usable.append(path)
+    return usable
