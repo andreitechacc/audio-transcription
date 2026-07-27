@@ -20,9 +20,9 @@ KNOWN_FORMATS = RAW_TEXT_FORMATS | {"json", "verbose_json", "diarized_json"}
 # in config.toml where they could be raised into a guaranteed HTTP 400.
 #
 # Every model caps this, so the cap applies by default rather than only to
-# models listed below. The default is the smallest limit observed in an actual
-# API rejection (gpt-4o-transcribe-diarize: "longer than 1400 seconds"), with
-# a margin. Being conservative for a model that would have allowed more costs
+# models listed below. Both gpt-4o-transcribe-diarize and gpt-4o-transcribe
+# reject audio "longer than 1400 seconds", so the default is that limit with a
+# margin. Being conservative for a model that would have allowed more costs
 # only an extra request, whereas guessing high costs a rejected one.
 DEFAULT_MAX_DURATION_MINUTES = 23.0
 
