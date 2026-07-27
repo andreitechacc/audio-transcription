@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 
+from transcription.core import transcriber
 from transcription.core.config import TranscriptionParams
+from transcription.core.errors import ApiError
 from transcription.core.transcriber import transcribe_audio
 
 DIARIZED = TranscriptionParams()
@@ -18,8 +22,10 @@ class FakeClient:
     arguments are recorded so tests can assert on what was actually sent.
     """
 
-    def __init__(self, parsed):
+    def __init__(self, parsed=None, errors=()):
         self.parsed = parsed
+        # Raised one per call, in order, before any successful response.
+        self.errors = list(errors)
         self.calls: list[dict] = []
         create = self._create
         self.audio = SimpleNamespace(
@@ -30,6 +36,8 @@ class FakeClient:
 
     def _create(self, **kwargs):
         self.calls.append(kwargs)
+        if self.errors:
+            raise self.errors.pop(0)
         parsed = self.parsed
         return SimpleNamespace(
             headers={"x-request-id": "req_test"}, parse=lambda: parsed
@@ -79,3 +87,99 @@ def test_plain_transcription_does_not_send_a_chunking_strategy(audio_file):
     client = FakeClient(SimpleNamespace(text=""))
     transcribe_audio(client, audio_file, PLAIN)
     assert "chunking_strategy" not in client.calls[0]
+
+
+# --- retry policy -----------------------------------------------------------
+#
+# The distinction these tests protect is a financial one: a failure that
+# happened before the server did any work is free to retry, while a timeout or
+# a dropped connection means the audio was very likely transcribed and billed
+# already, so retrying pays for the same work twice.
+
+REQUEST = httpx.Request("POST", "https://api.openai.com/v1/audio/transcriptions")
+
+
+def status_error(code: int) -> openai.APIStatusError:
+    return openai.APIStatusError(
+        "server said no", response=httpx.Response(code, request=REQUEST), body=None
+    )
+
+
+def rate_limit_error() -> openai.RateLimitError:
+    return openai.RateLimitError(
+        "slow down", response=httpx.Response(429, request=REQUEST), body=None
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_sleeping(monkeypatch):
+    """Keep backoff from making the suite slow."""
+    monkeypatch.setattr(transcriber.time, "sleep", lambda seconds: None)
+
+
+def test_a_timeout_is_not_retried(audio_file):
+    # Retrying would upload and pay for the same audio again.
+    client = FakeClient(errors=[openai.APITimeoutError(request=REQUEST)])
+
+    with pytest.raises(ApiError) as excinfo:
+        transcribe_audio(client, audio_file, PLAIN)
+
+    assert len(client.calls) == 1
+    assert "billed" in str(excinfo.value)
+
+
+def test_a_timeout_is_not_reported_as_a_connection_problem(audio_file):
+    # APITimeoutError subclasses APIConnectionError, so an inattentive except
+    # order sends the user off investigating their network for what is really
+    # a too-short timeout.
+    client = FakeClient(errors=[openai.APITimeoutError(request=REQUEST)])
+
+    with pytest.raises(ApiError, match="timeout"):
+        transcribe_audio(client, audio_file, PLAIN)
+
+
+def test_a_dropped_connection_is_not_retried(audio_file):
+    client = FakeClient(
+        errors=[openai.APIConnectionError(message="connection lost", request=REQUEST)]
+    )
+
+    with pytest.raises(ApiError):
+        transcribe_audio(client, audio_file, PLAIN)
+
+    assert len(client.calls) == 1
+
+
+def test_a_server_error_is_retried_and_can_succeed(audio_file):
+    # The server refused before transcribing anything, so this retry is free.
+    client = FakeClient(
+        parsed=SimpleNamespace(text="recovered"), errors=[status_error(503)]
+    )
+
+    assert transcribe_audio(client, audio_file, PLAIN) == "recovered"
+    assert len(client.calls) == 2
+
+
+def test_a_rate_limit_is_retried(audio_file):
+    client = FakeClient(parsed=SimpleNamespace(text="ok"), errors=[rate_limit_error()])
+
+    assert transcribe_audio(client, audio_file, PLAIN) == "ok"
+    assert len(client.calls) == 2
+
+
+def test_retries_are_bounded(audio_file):
+    client = FakeClient(errors=[status_error(500) for _ in range(10)])
+
+    with pytest.raises(ApiError, match="kept failing"):
+        transcribe_audio(client, audio_file, PLAIN)
+
+    assert len(client.calls) == transcriber.MAX_SAFE_RETRIES + 1
+
+
+def test_client_errors_are_not_retried(audio_file):
+    # A 400 means the request itself is wrong; sending it again cannot help.
+    client = FakeClient(errors=[status_error(400)])
+
+    with pytest.raises(ApiError, match="HTTP 400"):
+        transcribe_audio(client, audio_file, PLAIN)
+
+    assert len(client.calls) == 1

@@ -31,7 +31,16 @@ class TranscriptionParams:
     response_format: str = "diarized_json"
     max_size_mb: float = 24.0
     bitrate: str = "64k"
-    chunk_minutes: int = 10
+    # An upper bound, not a target. Splitting costs quality — the API keeps
+    # speaker labels consistent within one request but assigns them afresh in
+    # the next, so every split is a seam where "A" may become "B". Sending as
+    # much audio per request as the size limit allows is therefore the better
+    # default, and at 64k mono that limit is reached at roughly 50 minutes.
+    chunk_minutes: int = 45
+    # Transcribing 45 minutes in one request takes several minutes of wall
+    # clock time, during which the connection carries nothing. The SDK default
+    # is far too short for that.
+    request_timeout_seconds: float = 900.0
 
     def __post_init__(self) -> None:
         # Validating here rather than in the loader means CLI flags and bot
@@ -53,6 +62,8 @@ class TranscriptionParams:
             raise ConfigError("chunk_minutes must be at least 1.")
         if self.max_size_mb <= 0:
             raise ConfigError("max_size_mb must be greater than 0.")
+        if self.request_timeout_seconds <= 0:
+            raise ConfigError("request_timeout_seconds must be greater than 0.")
 
     @property
     def chunk_separator(self) -> str:

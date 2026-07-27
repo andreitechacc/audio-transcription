@@ -7,11 +7,20 @@ model = "gpt-4o-transcribe-diarize"
 # diarized_json requires a diarizing model; the pairing is checked at startup.
 response_format = "diarized_json"
 
-# The API limit is 25 MB; the margin covers container overhead.
+# The API limit is 25 MB; the margin covers container overhead. This is what
+# actually decides whether a recording gets split.
 max_size_mb = 24
-# Audio is encoded to mono MP3 at this bitrate before being uploaded.
+# Audio is encoded to mono MP3 at this bitrate before being uploaded. At 64k,
+# max_size_mb is reached at roughly 50 minutes of audio.
 bitrate = "64k"
-# Audio longer than this is always split into chunks of this length, even when
-# it is under max_size_mb — long single requests are more likely to have their
-# connection dropped before the response arrives.
-chunk_minutes = 10
+
+# An upper bound, not a target. Splitting costs transcription quality: the API
+# keeps speaker labels consistent within a single request but assigns them
+# from scratch in the next one, so every split is a seam where "A" can become
+# "B". Keep this high enough that size, not duration, decides the split.
+chunk_minutes = 45
+
+# One request covering 45 minutes takes several minutes to come back, and the
+# connection carries nothing while it waits. Too low a value here aborts a
+# request that the API has already transcribed — and billed.
+request_timeout_seconds = 900

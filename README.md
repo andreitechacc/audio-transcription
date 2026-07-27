@@ -66,8 +66,9 @@ language = "en"
 model = "gpt-4o-transcribe-diarize"
 response_format = "diarized_json"  # speaker-labelled; "json" for plain text
 max_size_mb = 24                   # API limit is 25 MB, keep a margin
-bitrate = "64k"
-chunk_minutes = 10
+bitrate = "64k"                    # mono; 24 MB is reached at roughly 50 min
+chunk_minutes = 45                 # upper bound on one request, not a target
+request_timeout_seconds = 900
 ```
 
 `diarized_json` labels each line with a speaker (`[A] …`, `[B] …`) and
@@ -100,35 +101,51 @@ inside Python, so memory use stays flat regardless of recording length.
 
 ## How long and oversized audio is handled
 
+**Splitting is avoided wherever possible, because it costs quality.** The API
+keeps speaker labels consistent within a single request, but assigns them from
+scratch in the next one, so every split is a seam where `A` may become `B`.
+The aim is therefore to send as much audio per request as the limits allow.
+
 1. **Shorter than `chunk_minutes`:** converted to a single mono MP3 and sent
    as one request. The conversion is not only about size — some phone
    recordings are `.m4a` with a container brand (e.g. `3gp4`) that the API
    rejects even though m4a is nominally supported, and a plain MP3 sidesteps
-   that. If the result still exceeds `max_size_mb`, it falls through to
-   splitting.
-2. **Longer than `chunk_minutes`:** split directly from the original file
-   into chunks, each transcribed separately. This happens even when the file
-   is under the size limit: a single request covering a long recording takes
-   long enough that flaky links (proxies, some VPNs) drop the connection
-   before the response arrives, whereas several short requests each complete
-   comfortably.
+   that. Mono at 64k also means a 30-minute recording is around 14 MB, well
+   inside the limit. If the result still exceeds `max_size_mb`, it falls
+   through to splitting.
+2. **Longer than `chunk_minutes`, or still too large after conversion:** split
+   from the original file into chunks, each transcribed separately.
 
-When splitting diarized audio, each chunk is diarized independently — speaker
-labels are **not** guaranteed to refer to the same person across chunk
-boundaries, since every request assigns them from scratch.
+With the default settings, size is what actually triggers a split: at 64k mono
+`max_size_mb` is reached at roughly 50 minutes, and `chunk_minutes` sits below
+that as a safety bound rather than as the usual reason to split.
 
 ## Network reliability
 
-Requests use a 120-second timeout and up to 5 automatic retries, well above
-the SDK defaults, which are tuned for fast chat calls. If you are outside an
-[OpenAI-supported region](https://platform.openai.com/docs/supported-countries)
-you will need a VPN — but note that some VPN configurations drop long-lived
-connections themselves. If requests keep failing, try a different server or
-protocol (WireGuard holds up better than OpenVPN here).
+Transcription is billed per minute of audio as soon as the API processes it,
+whether or not the response reaches you. That single fact shapes the retry
+policy here, and it is why the SDK's own retries are switched off:
 
-If a request fails *after* OpenAI processed the audio (the response was lost
-in transit), you may still be billed for it. There is no way to re-fetch a
-lost result; only the request ID in the log remains for reference.
+- **Timeouts and dropped connections are never retried automatically.** By
+  then the audio has been uploaded and almost certainly transcribed and
+  billed; only the response was lost. Retrying pays for the same work again
+  without improving the odds. The failure is reported instead, so the decision
+  to pay again is yours.
+- **Rate limits and 5xx responses are retried** (twice, with backoff). The
+  server refused before doing any work, so those retries are free.
+
+`request_timeout_seconds` defaults to 900 because one request covering 45
+minutes of audio can take several minutes to come back, during which the
+connection carries nothing. Setting it too low is actively expensive: it
+aborts requests the API has already transcribed and billed.
+
+If you are outside an
+[OpenAI-supported region](https://platform.openai.com/docs/supported-countries)
+you will need a VPN — but some VPN configurations close connections that stay
+idle, which is exactly what a long transcription looks like. A symptom worth
+recognising: attempts failing after a suspiciously round interval (60 seconds,
+say) point at the network path, whereas attempts failing at exactly
+`request_timeout_seconds` point at this setting.
 
 ## Development
 

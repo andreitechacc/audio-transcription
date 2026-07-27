@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import openai
@@ -11,23 +12,31 @@ from .errors import ApiError
 
 logger = logging.getLogger(__name__)
 
-# The client's defaults are tuned for fast chat calls. A single transcription
-# request legitimately takes a minute or more, and flaky links (VPNs, proxies)
-# drop long-lived connections, so both numbers are raised well above them.
-REQUEST_TIMEOUT_SECONDS = 120.0
-MAX_RETRIES = 5
+# Retries are handled here rather than by the SDK. The SDK retries connection
+# errors and timeouts too, and those are exactly the failures that must NOT be
+# retried automatically: the audio was uploaded, the server transcribed it and
+# billed for it, and only the response was lost. Retrying pays for the same
+# work again with no better odds of the response arriving.
+#
+# What is safe to retry is a request the server refused before doing any work:
+# a rate limit, or a 5xx.
+RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+MAX_SAFE_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 2.0
 
 
-def build_client(api_key: str | None = None) -> OpenAI:
-    """Create an API client with transcription-appropriate timeouts.
+def build_client(
+    api_key: str | None = None, timeout_seconds: float = 900.0
+) -> OpenAI:
+    """Create an API client configured for long transcription requests.
 
-    Every interface builds its client through here so none of them silently
-    fall back to the SDK's short default timeout.
+    The SDK's defaults are tuned for fast chat calls; transcribing half an
+    hour of audio in one request takes several minutes. max_retries is zero
+    because retrying is decided in transcribe_audio, where it can tell a free
+    failure from one that has already been billed.
     """
     try:
-        return OpenAI(
-            api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=MAX_RETRIES
-        )
+        return OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
     except openai.OpenAIError as exc:
         # Raised when no key is configured at all.
         raise ApiError(
@@ -39,52 +48,92 @@ def build_client(api_key: str | None = None) -> OpenAI:
 def transcribe_audio(client: OpenAI, path: Path, params: TranscriptionParams) -> str:
     """Transcribe one audio file that is already within the API's limits."""
     logger.info(
-        "Transcribing %s (language=%s, model=%s)", path.name, params.language, params.model
+        "Transcribing %s (language=%s, model=%s)",
+        path.name,
+        params.language,
+        params.model,
     )
 
     kwargs = {}
     if params.is_diarized:
-        # Lets the API do its own long-audio segmentation before diarizing,
-        # which keeps speaker labels consistent within a single request.
+        # Lets the API do its own segmentation before diarizing, which keeps
+        # speaker labels consistent for the whole of this request. It is the
+        # reason to send as much audio per request as the limits allow.
         kwargs["chunking_strategy"] = "auto"
 
-    try:
-        with open(path, "rb") as f:
-            # with_raw_response keeps the HTTP headers reachable so the
-            # request id can be logged; response.parse() then gives the same
-            # object the normal call would have returned.
-            response = client.audio.transcriptions.with_raw_response.create(
-                model=params.model,
-                file=f,
-                language=params.language,
-                response_format=params.response_format,
-                **kwargs,
-            )
-    except openai.AuthenticationError as exc:
-        raise ApiError(
-            "OpenAI rejected the API key. Check OPENAI_API_KEY in your .env file."
-        ) from exc
-    except openai.RateLimitError as exc:
-        raise ApiError(
-            "OpenAI rate limit or quota exceeded. Check your billing and usage "
-            "limits, then retry."
-        ) from exc
-    except openai.APIConnectionError as exc:
-        raise ApiError(
-            f"Could not reach OpenAI: {exc}. Check your connection — if you are "
-            "using a VPN, note that some configurations drop long-running "
-            "requests before the transcription finishes."
-        ) from exc
-    except openai.APIStatusError as exc:
-        raise ApiError(
-            f"OpenAI returned an error for {path.name} (HTTP {exc.status_code}): "
-            f"{exc.message}"
-        ) from exc
+    response = _create_with_retries(client, path, params, kwargs)
 
     request_id = response.headers.get("x-request-id", "unknown")
     logger.info("Request %s succeeded for %s", request_id, path.name)
 
     return _extract_text(response.parse(), params)
+
+
+def _create_with_retries(
+    client: OpenAI, path: Path, params: TranscriptionParams, kwargs: dict
+):
+    """Send the request, retrying only failures that cost nothing."""
+    for attempt in range(MAX_SAFE_RETRIES + 1):
+        try:
+            with open(path, "rb") as f:
+                # with_raw_response keeps the HTTP headers reachable so the
+                # request id can be logged; response.parse() then returns the
+                # same object a normal call would have.
+                return client.audio.transcriptions.with_raw_response.create(
+                    model=params.model,
+                    file=f,
+                    language=params.language,
+                    response_format=params.response_format,
+                    **kwargs,
+                )
+        except openai.AuthenticationError as exc:
+            raise ApiError(
+                "OpenAI rejected the API key. Check OPENAI_API_KEY in your .env file."
+            ) from exc
+        except openai.APITimeoutError as exc:
+            # Must be caught before APIConnectionError, which it subclasses —
+            # otherwise a timeout is reported as a connection problem and sends
+            # you looking at your network instead of at the timeout setting.
+            raise ApiError(
+                f"OpenAI did not respond within the timeout while transcribing "
+                f"{path.name}. The audio was most likely transcribed and billed, "
+                f"and only the response was lost. Raise request_timeout_seconds "
+                f"in config.toml, or lower chunk_minutes so each request covers "
+                f"less audio."
+            ) from exc
+        except openai.APIConnectionError as exc:
+            raise ApiError(
+                f"Could not reach OpenAI while transcribing {path.name}: {exc}. "
+                "If you are on a VPN, note that some configurations close "
+                "connections that stay idle, which a long transcription does."
+            ) from exc
+        except openai.RateLimitError as exc:
+            _wait_before_retry(attempt, "rate limited", exc)
+        except openai.APIStatusError as exc:
+            if exc.status_code not in RETRYABLE_STATUS_CODES:
+                raise ApiError(
+                    f"OpenAI returned an error for {path.name} "
+                    f"(HTTP {exc.status_code}): {exc.message}"
+                ) from exc
+            _wait_before_retry(attempt, f"server error {exc.status_code}", exc)
+
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _wait_before_retry(attempt: int, reason: str, exc: Exception) -> None:
+    """Sleep before the next attempt, or give up if they are exhausted.
+
+    Only reached for failures where the server did no work, so a retry is
+    free apart from the waiting.
+    """
+    if attempt >= MAX_SAFE_RETRIES:
+        raise ApiError(
+            f"OpenAI kept failing ({reason}) after {MAX_SAFE_RETRIES + 1} attempts: {exc}"
+        ) from exc
+
+    delay = RETRY_BACKOFF_SECONDS * (2**attempt)
+    logger.warning("Request %s; retrying in %.0fs", reason, delay)
+    time.sleep(delay)
 
 
 def _extract_text(parsed: object, params: TranscriptionParams) -> str:
@@ -103,9 +152,4 @@ def _extract_text(parsed: object, params: TranscriptionParams) -> str:
     return parsed.text
 
 
-__all__ = [
-    "MAX_RETRIES",
-    "REQUEST_TIMEOUT_SECONDS",
-    "build_client",
-    "transcribe_audio",
-]
+__all__ = ["MAX_SAFE_RETRIES", "build_client", "transcribe_audio"]

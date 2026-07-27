@@ -121,7 +121,7 @@ def _make_progress_printer(stream: TextIO) -> Callable[[Progress], None]:
 def run(args: argparse.Namespace) -> None:
     params = apply_overrides(load_params(args.config), args)
     output_path = args.output or args.input.with_suffix(".txt")
-    client = build_client()
+    client = build_client(timeout_seconds=params.request_timeout_seconds)
 
     # Written chunk by chunk as results arrive, so a failure partway through
     # leaves the parts that already succeeded (and were already billed) on
