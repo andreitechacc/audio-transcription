@@ -64,21 +64,8 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
     tmp_dir = Path(tempfile.mkdtemp(prefix="transcribe_"))
     try:
         size = get_size_mb(input_path)
-        logger.info("Input size: %.1f MB", size)
-
-        # Always re-encode through ffmpeg first, even for small files: some
-        # phone recordings are saved as .m4a with a container brand (e.g.
-        # 3gp4) that OpenAI's format sniffing rejects, even though m4a is
-        # nominally supported. Re-encoding to a plain mp3 sidesteps that.
-        normalized_path = tmp_dir / "normalized.mp3"
-        compress_audio(input_path, normalized_path, config.bitrate)
-        normalized_size = get_size_mb(normalized_path)
-        duration_minutes = get_duration_minutes(normalized_path)
-        logger.info(
-            "Normalized size: %.1f MB, duration: %.1f min",
-            normalized_size,
-            duration_minutes,
-        )
+        duration_minutes = get_duration_minutes(input_path)
+        logger.info("Input: %.1f MB, %.1f min", size, duration_minutes)
 
         # Split not just when over the API's size limit, but also when the
         # audio is longer than chunk_minutes: a single request covering a
@@ -86,10 +73,24 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
         # (proxies, some VPNs, some ISPs) drop it before the response
         # arrives, even though it's well under the 25 MB size limit. Shorter
         # per-request audio means shorter, more reliable requests.
-        needs_split = (
-            normalized_size > config.max_size_mb
-            or duration_minutes > config.chunk_minutes
-        )
+        #
+        # When splitting, chunks are cut directly from the original file:
+        # split_audio() already re-encodes each chunk to mp3, so there's no
+        # need to also re-encode the whole file first (that would just
+        # double the encoding work and stack lossy re-compression).
+        # Re-encoding the whole file up front is only needed for the
+        # single-request path below, both for size and because some phone
+        # recordings are saved as .m4a with a container brand (e.g. 3gp4)
+        # that OpenAI's format check rejects even though m4a is nominally
+        # supported — re-encoding to a plain mp3 sidesteps that.
+        if duration_minutes <= config.chunk_minutes:
+            normalized_path = tmp_dir / "normalized.mp3"
+            compress_audio(input_path, normalized_path, config.bitrate)
+            normalized_size = get_size_mb(normalized_path)
+            logger.info("Normalized size: %.1f MB", normalized_size)
+            needs_split = normalized_size > config.max_size_mb
+        else:
+            needs_split = True
 
         if not needs_split:
             text = transcribe_file(client, normalized_path, language, config.model)
@@ -98,11 +99,11 @@ def run(input_path: Path, output_path: Path, language: str, config: Config) -> N
             logger.info(
                 "Splitting into %d-minute chunks (size=%.1f MB, duration=%.1f min)",
                 config.chunk_minutes,
-                normalized_size,
+                size,
                 duration_minutes,
             )
             chunks = split_audio(
-                normalized_path, tmp_dir, config.chunk_minutes, config.bitrate
+                input_path, tmp_dir, config.chunk_minutes, config.bitrate
             )
             # Write each chunk's text as soon as it comes back, so a
             # failure partway through doesn't lose the chunks that
