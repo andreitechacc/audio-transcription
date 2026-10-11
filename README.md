@@ -7,7 +7,7 @@ including speaker-labelled output. Long or oversized recordings are converted
 and split automatically, so a two-hour meeting is handled the same way as a
 two-minute voice note.
 
-Currently a CLI; a Telegram bot and a web interface are planned on top of the
+Currently a CLI
 same core (see [Roadmap](#roadmap)).
 
 ## Requirements
@@ -184,11 +184,6 @@ nor an API key, and they cost nothing to run. What they actually cover is the
 decision logic — convert or split, how many requests, in what order results
 are handed back — which is where a silent mistake would cost real money.
 
-## Roadmap
-
-- [x] CLI
-- [ ] Telegram bot — send a voice message, get a transcript back
-- [ ] Web interface — upload a file, track the job, download the result
 
 ## License
 
